@@ -1,0 +1,337 @@
+% Static planner for multi-agent path finding for grid maps and the makespan objective
+% using train motion on agents
+% swap is forbidden
+
+import sat.
+
+main([InsFile]) =>
+    %printf("solving %s\n",InsFile),
+    cl(InsFile),
+    main.
+
+main =>
+    ins(Graph, As, Avoid, Cost),                   % read input
+    cl_facts(Graph,[$neibs(+,-)]),
+    N = len(Graph),                     % N = number of nodes
+    create_edges(N, E),					% E = number of edges
+    time(once(path(N,E,to_array(As),Avoid,Cost,Plan))),
+    output_plan(Plan).
+
+test =>
+    testins(Graph, As, Avoid, Cost),                   % read input
+    cl_facts(Graph,[$neibs(+,-)]),
+    N = len(Graph),                     % N = number of nodes
+    create_edges(N, E),                 % E = number of edges
+    time(once(path(N,E,to_array(As),Avoid,Cost,Plan))),
+    output_plan(Plan).
+
+
+%%%%%%%%%%%%%%%%%%%%
+% MAIN COMPUTATION %
+%%%%%%%%%%%%%%%%%%%%
+
+% N : the number of nodes in the graph
+% E : the number of edges
+% As : list of agents [(V1,FV1,T1),(V2,FV2,T2),...,(Vk,FVk,Tk)], 
+%      where Vi is the initial location and FVi is the final location of agent i
+%      Ti is timestep the agent appears in the graph
+% For each agent and each time point between 1..PathLen+1, create a frame.
+% K is the number of agents
+% M is makespan
+% Cost is a minimum increment over the lower bound of the sum of costs (output)
+% B is unfolded graph with solution B[S,A,I] - agent A visits node I at step S (output)
+path_for_delta(N,E,As,K,M,Avoid,B) =>
+    ME = M - 1,
+
+    printf("trying makespan %w\n",M),
+    B = new_array(M,K,N),
+    C = new_array(ME,K,E),
+
+    preprocess_avoid(Avoid, B, C),
+
+    % Initialize the first and last states
+    foreach(A in 1..K)    
+        (V,FV) = As[A],
+        B[1,A,V] = 1,
+        B[M,A,FV] = 1,
+        preprocess_forward(A,V,M,N,B),
+        preprocess_backward(A,FV,M,N,B),
+        preprocess_sum(A,V,FV,M,N,B),
+        preprocess_edges(K,N,ME,B,E,C)
+    end,
+
+    %printf("B %w\n",B),
+
+    B :: 0..1,
+    C :: 0..1,
+
+    % Each agent occupies up to one vertex at each time.
+    foreach (T in 1..M, A in 1..K)
+        sum([B[T,A,V] : V in 1..N]) #=< 1
+    end,
+
+    % No two agents occupy the same vertex at any time.
+    foreach(T in 1..M, V in 1..N) 
+        sum([B[T,A,V] : A in 1..K]) #=< 1   
+    end,
+
+    % if an edge is used in one direction, it can not be used in the other direction (no swap)
+    foreach(T in 1..ME, EID in 1..E) 
+    	oposit_edges(EID, E, EList),
+    	sum([C[T,A,W] : A in 1..K, W in EList]) #=< 1   
+    end,
+
+    % if an agent is in a node, it needs to move through one of the edges from that node
+    foreach(T in 1..ME, A in 1..K, V in 1..N) 
+    	out_edges(V,E,EList),
+        B[T,A,V] #=> sum([C[T,A,W] : W in EList]) #= 1
+    end,
+
+    % if agent is using an edge, it must arrive to the connected node in next timestep
+    foreach(T in 1..ME, A in 1..K, EID in 1..E) 
+        edge(EID,_,V),
+        C[T,A,EID] #=> B[T+1,A,V] #= 1
+    end,
+
+    solve(B).   % minimizing sum-of-costs
+
+path(N,E,As,Avoid,Cost,B) =>
+    K = len(As),
+
+    if Cost == -1 then
+        lower_bound(to_list(As),LB),
+        between(LB+1,999999999,M)
+    else
+        M = Cost
+    end,
+
+    path_for_delta(N,E,As,K,M,Avoid,B).
+
+
+%%%%%%%%%%%%%%%%%%%%%
+% UTILITY FUNCTIONS %
+%%%%%%%%%%%%%%%%%%%%%
+
+% if there is another group to avoid, we must set B and C to 0 to prevent collisions
+preprocess_avoid(Avoid, B, C) =>
+    % nodes
+    foreach (T in 1..len(Avoid))
+        foreach (A1 in 1..len(Avoid[T]))
+            foreach (A in 1..len(B[T]))
+                B[T,A,Avoid[T,A1]] = 0
+            end
+        end
+    end,
+
+    % edges
+    foreach (T in 1..len(C))
+        foreach (A1 in 1..len(Avoid[T]))
+            foreach (EID in 1..len(C[1,1]))
+                edge(EID, U, V),
+                if U == Avoid[T,A1], V == Avoid[T+1,A1] then
+                    oposit_edges(EID, len(C[1,1]), EList),
+                    Earr = to_array(EList),
+                    foreach (A in 1..len(C[T]))
+                        foreach (Edge in 1..len(Earr))
+                            C[T,A,Earr[Edge]] = 0
+                        end
+                    end
+                end
+            end
+        end
+    end.
+
+
+% foreach vertex U, if U is at least distance D away from V,
+% then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
+preprocess_forward(A,V,MaxT,N,B) =>
+    foreach (U in 1..N, V !== U)
+        if shortest_path_cost((V,U),Dist) then
+            foreach (T1 in 1..min(Dist,MaxT))
+                B[T1,A,U] = 0
+            end
+        else
+        	foreach (T1 in 1..MaxT)
+        		B[T1,A,U] = 0
+        	end
+        end
+    end.
+
+% foreach vertex U, if U is at least distance D away from FV,
+% then agent A cannot occupy vertex U at time MaxT, MaxT-1, ..., MaxT-D+1
+preprocess_backward(A,FV,MaxT,N,B) =>
+    foreach (U in 1..N, FV !== U)
+        if shortest_path_cost((U,FV),Dist) then
+            foreach (T1 in MaxT..-1..max(1,MaxT-Dist+1))
+                B[T1,A,U] = 0
+            end
+        end
+    end.
+
+% foreach vertex U, if U is at least distance D away from V,
+% then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
+preprocess_sum(A,V,FV,MaxT,N,B) =>
+    foreach (U in 1..N, V !== U, FV !== U)
+        if shortest_path_cost((V,U),Dist1) then
+            if shortest_path_cost((U,FV),Dist2) then
+                Dist = Dist1+Dist2,
+                if Dist >= MaxT then
+                    foreach (T1 in 1..MaxT)
+                        B[T1,A,U] = 0
+                    end
+                end
+            else
+                foreach (T1 in 1..MaxT)
+                    B[T1,A,U] = 0
+                end
+            end
+        else
+            foreach (T1 in 1..MaxT)
+                B[T1,A,U] = 0
+            end
+        end
+    end.
+
+% if agent can not be in a vertex, then he could not use any edge connexted to it
+preprocess_edges(K,N,M1,B,E,C) =>
+	foreach(A in 1..K, T in 1..M1-1, V in 1..N)
+		if B[T,A,V] == 0 then
+			% outgoing edges are 0
+			foreach(EID in 1..E)
+				edge(EID,U1,_),
+				if U1 == V then
+					C[T,A,EID] = 0
+				end
+			end
+		end
+	end,
+
+	foreach(A in 1..K, T in 2..M1, V in 1..N)
+		if B[T,A,V] == 0 then
+			% incpoming edges are 0
+			foreach(EID in 1..E)
+				edge(EID,_,V1),
+				if V1 == V then
+					C[T-1,A,EID] = 0
+				end
+			end
+		end
+	end.
+
+lower_bound(As,LB) =>
+    lower_bound(As,0,LB).
+
+lower_bound([],LB0,LB) => LB = LB0.
+lower_bound([(V,FV)|As],LB0,LB) =>
+    shortest_path_cost((V,FV),Cost),
+	lower_bound(As,max(LB0,Cost),LB).
+
+table (+,min)
+shortest_path_cost((0,_),Cost) => Cost = 0.
+shortest_path_cost((V,V),Cost) => Cost = 0.
+shortest_path_cost((V,FV),Cost) => 
+    neibs(V,Neibs),
+    member(NextV,Neibs),
+    shortest_path_cost((NextV,FV),Cost1),
+    Cost = Cost1+1.
+
+% create $edge from $neibs
+create_edges(N, E) =>
+	Ed = [],
+	EID = 1,
+	foreach(V in 1..N)
+		neibs(V,Neibs),
+		L = len(Neibs),
+		foreach(I in 1..L)
+			Ed := [$edge(EID, V, Neibs[I])|Ed],
+			EID := EID + 1
+		end
+	end,
+
+    cl_facts(Ed,[$edge(+,-,-)]),
+    E = len(Ed).
+
+% for edge EID finds an opposite edge and returns both edges as a list
+oposit_edges(EID, E, EList) =>
+	edge(EID,U,V),
+
+	ETMP = [EID],
+
+	foreach(EID1 in 1..E, EID !== EID1)
+		edge(EID1,V1,U1),
+		if V == V1 then
+			if U == U1 then
+            	ETMP := [EID1] ++ ETMP
+            end
+        end
+    end,
+    EList = ETMP.
+
+% for node W, get list of outgoing edges
+out_edges(W,E,EList) =>
+	ETMP = [],
+	foreach (EID in 1..E)
+		edge(EID,U,_),
+		if U == W then
+			ETMP := [EID] ++ ETMP
+		end
+	end,
+	EList = ETMP.
+
+output_plan(B) =>
+    M = len(B) - 1,
+    K = len(B[1]),
+    N = len(B[1,1]),
+    %printf("agents | timesteps\n"),
+    %printf("%w %w\n",K,M+1),
+    printf("timesteps %w\n",M+1),
+	foreach (A in 1..K)
+		foreach (T in 1..M+1)
+			BTest := 0,
+			foreach (V in 1..N)
+				if B[T,A,V] == 1 then
+					printf("%w",V),
+					BTest := 1
+				end
+			end,
+			if BTest == 0 then
+				printf("O")
+			end,
+			if T <= M then
+				print(" ")
+			else
+				nl
+			end
+		end
+	end.
+
+
+%%%%%%%%%%%%%%%
+% TEST INPUTS %
+%%%%%%%%%%%%%%%
+
+% G is the number of nodes in the original graph. The other edges form the "tunnels" for agents that will appear later
+% G is used to compute the objective function, since we do not count the agents until they are in the original graph
+% $edge(id, from, to)
+% As are agents - the third parameter is timestep when they appear.
+% If it is equal to 1 and in the first G nodes, they are in the static part of the problem
+
+
+testins(Graph, As, Avoid, Cost) =>
+    Graph = [
+    $neibs(1,[1,3]),
+    $neibs(2,[2,3]),
+    $neibs(3,[3,4,1,2]),
+    $neibs(4,[4,3,5,6]),
+    $neibs(5,[5,4]),
+    $neibs(6,[6,4])
+    ],
+    As = [(1,5)],
+    Avoid = new_array(6,1),
+    Avoid[1,1] = 6,
+    Avoid[2,1] = 4,
+    Avoid[3,1] = 3,
+    Avoid[4,1] = 2,
+    Avoid[5,1] = 2,
+    Avoid[6,1] = 2,
+    Cost = 6.
