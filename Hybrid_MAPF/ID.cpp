@@ -2,10 +2,11 @@
 
 using namespace std;
 
-ID::ID(Instance* in)
+ID::ID(Instance* in, int cf)
 {
 	inst = in;
 	single_path = new Dijkstra(inst);
+	cost_function = cf;
 }
 
 int ID::SolveProblem(int solver)
@@ -15,13 +16,13 @@ int ID::SolveProblem(int solver)
 	current_plan = vector<vector<int> >(inst->agents, vector<int>());
 
 	if (solver == 1)
-		solvers.push_back(new PicatSolver(inst));
+		solvers.push_back(new PicatSolver(inst, cost_function));
 	else if (solver == 2)
-		solvers.push_back(new CBSSolver(inst));
+		solvers.push_back(new CBSSolver(inst, cost_function));
 	else
 	{
-		solvers.push_back(new PicatSolver(inst));
-		solvers.push_back(new CBSSolver(inst));
+		solvers.push_back(new CBSSolver(inst, cost_function));
+		solvers.push_back(new PicatSolver(inst, cost_function));
 	}
 
 	solver_computed = vector<int>(solvers.size());
@@ -43,6 +44,7 @@ int ID::SolveProblem(int solver)
 		single_path->ShortestPath(inst->start[i], inst->goal[i], current_plan[i]);
 		if (current_plan[i].size() > max_time)
 			max_time = current_plan[i].size();
+		inst->distance[inst->start[i]][inst->goal[i]] = current_plan[i].size() - 1;
 	}
 
 	for (size_t i = 0; i < current_plan.size(); i++)
@@ -95,6 +97,8 @@ int ID::SolveProblem(int solver)
 
 	inst->CheckPlan(current_plan);
 	inst->PrintPlan(current_plan);
+	final_makespan = inst->GetPlanMakespan(current_plan);
+	final_soc = inst->GetPlanSoC(current_plan);
 
 	return CleanUp(0);
 }
@@ -165,29 +169,202 @@ void ID::MergeGroups(int g1, int g2)
 
 int ID::ComputeGroupCost(int g1)
 {
-	int cost = 0; // cost is makespan
+	int cost = 0;
 
-	for (size_t i = 0; i < groups[g1].size(); i++)
+	// Makespan
+	if (cost_function == 1)
 	{
-		for (size_t j = current_plan[groups[g1][i]].size() - 1; j > cost; j--)
+		for (size_t i = 0; i < groups[g1].size(); i++)
 		{
-			if (current_plan[groups[g1][i]][j] == inst->goal[groups[g1][i]] && current_plan[groups[g1][i]][j-1] != inst->goal[groups[g1][i]])
+			for (size_t j = current_plan[groups[g1][i]].size() - 1; j > cost; j--)
 			{
-				cost = j;
-				break;
+				if (current_plan[groups[g1][i]][j] == inst->goal[groups[g1][i]] && current_plan[groups[g1][i]][j - 1] != inst->goal[groups[g1][i]])
+				{
+					cost = j;
+					break;
+				}
+			}
+		}
+		cost++;
+	}
+	// Sum of Costs
+	else if (cost_function == 2)
+	{
+		for (size_t i = 0; i < groups[g1].size(); i++)
+		{
+			for (int j = current_plan[groups[g1][i]].size() - 1; j >= 0; j--)
+			{
+				if (current_plan[groups[g1][i]][j] != inst->goal[groups[g1][i]])
+				{
+					cost += j + 1;
+					break;
+				}
 			}
 		}
 	}
 
-	return cost + 1;
+	return cost;
 }
 
 
+void ID::FixPlan(vector<int>& agents_to_plan, vector<vector<int> >& found_plan)
+{
+	int old_makespan = current_plan[0].size();
+	int new_makespan = old_makespan;
+
+	// makespan of new solution
+	for (size_t i = 0; i < found_plan.size(); i++)
+	{
+		for (size_t j = found_plan[i].size() - 1; j > 0; j--)
+		{
+			if (found_plan[i][j] != found_plan[i][j - 1])
+			{
+				new_makespan = max(new_makespan, (int)j + 1);
+				break;
+			}
+		}
+	}
+	
+	// fix current plan 
+	if (new_makespan != old_makespan)
+	{
+		for (size_t i = 0; i < current_plan.size(); i++)
+		{
+			current_plan[i].resize(new_makespan, inst->goal[i]);
+		}
+	}
+
+	// fix added plan
+	if (new_makespan != found_plan[0].size())
+	{
+		for (size_t i = 0; i < found_plan.size(); i++)
+		{
+			found_plan[i].resize(new_makespan, inst->goal[agents_to_plan[i]]);
+		}
+	}
+
+	// add new plan
+	for (size_t i = 0; i < agents_to_plan.size(); i++)
+	{
+		current_plan[agents_to_plan[i]] = found_plan[i];
+	}
+}
+
+int ID::CleanUp(int ret_val)
+{
+	for (size_t i = 0; i < solvers.size(); i++)
+		delete solvers[i];
+
+	solvers.clear();
+	groups.clear();
+	agent_to_group.clear();
+	conflicted_groups.clear();
+
+	//delete single_path;
+
+	return ret_val;
+}
+
+ID::~ID()
+{
+	delete single_path;
+}
+
+/***************************************/
+/* Different solving techniques follow */
+/***************************************/
+/* interface */
 // plan for groups g1 and g2 with Cost or less
 // if g2 == -1 -> no constraints, plan only for g1
 // if SoC == -1 -> no constraint on SoC
 // return -100 = timeout or error, 0 = ok, 1 = Can not be solved (unsolveable or too large cost)
+
+
+
+// solver both solver after each other, take the faster (simulation of parallel)
 int ID::PlanForGroups(int g1, int g2, int Cost)
+{
+	vector<int> agents_to_plan;
+	vector<vector<int> > agents_to_avoid;
+
+	// is in g1 -> to plan
+	agents_to_plan = groups[g1];
+
+	// set avoidance table - [agent][time] = node
+	if (g2 != -1)
+	{
+		agents_to_avoid = vector<vector<int> >(groups[g2].size());
+		for (size_t i = 0; i < groups[g2].size(); i++)
+			for (size_t j = 0; j < current_plan[groups[g2][i]].size(); j++)
+				agents_to_avoid[i].push_back(current_plan[groups[g2][i]][j]);
+
+		//for (size_t i = 0; i < agents_to_avoid.size(); i++)
+		//	agents_to_avoid[i].resize(Cost, inst->goal[groups[g2][i]]);
+	}
+
+	int timelimit = timelimit = inst->timeout; // in milli-seconds
+	if (timelimit > inst->timeout - runtime)
+		timelimit = inst->timeout - runtime;
+
+	vector<long long> vc_time_spent_now;
+	vector<int> vc_ret_val;
+	vector<vector<vector<int> > > found_plan(solvers.size());
+
+	for (size_t i = 0; i < solvers.size(); i++)
+	{
+		if (runtime >= inst->timeout)
+			return -100;
+
+		if (i > 0)
+		{
+			timelimit = min((long long)timelimit, vc_time_spent_now[i - 1]);
+			timelimit += 5000;
+		}
+
+		chrono::steady_clock::time_point begin = chrono::steady_clock::now();
+		solvers[i]->Solve(agents_to_plan, agents_to_avoid, Cost, timelimit);
+		chrono::steady_clock::time_point end = chrono::steady_clock::now();
+
+		long long time_spent_now = chrono::duration_cast<chrono::milliseconds>(end - begin).count();
+		vc_time_spent_now.push_back(time_spent_now);
+
+		int ret_val = solvers[i]->ReadResults(found_plan[i], Cost);
+		vc_ret_val.push_back(ret_val);
+	}
+
+	int min_index = 0;
+	for (size_t i = 0; i < solvers.size(); i++)
+	{
+		if (vc_time_spent_now[i] < vc_time_spent_now[min_index])
+			min_index = i;
+	}
+	
+	runtime += vc_time_spent_now[min_index];
+	solver_computed[min_index]++;
+	solver_time[min_index].push_back(vc_time_spent_now[min_index]);
+
+	if (vc_ret_val[min_index] == 0)
+	{
+		// ok, we have good solution
+		FixPlan(agents_to_plan, found_plan[min_index]);
+
+		solver_used[min_index]++;
+		return 0;
+	}
+	else if (vc_ret_val[min_index] == 1)
+	{
+		// can not be solved
+		return 1;
+	}
+
+	// solver timeouted, or there was another error -> use another solver
+	return -100;
+}
+
+
+
+// solve incrementaly for fixed order - outdated!!!
+/*int ID::PlanForGroups(int g1, int g2, int Cost)
 {
 	vector<int> agents_to_plan;
 	vector<vector<int> > agents_to_avoid;
@@ -208,7 +385,13 @@ int ID::PlanForGroups(int g1, int g2, int Cost)
 	}
 
 	int timelimit = 15000; // in milli-seconds
-	
+
+	// if there is only one solver, no need to increment timelimit
+	if (solvers.size() == 1)
+		timelimit = inst->timeout;
+	else
+		timelimit = 15000;
+
 	while (true)
 	{
 		for (size_t i = 0; i < solvers.size(); i++)
@@ -224,14 +407,14 @@ int ID::PlanForGroups(int g1, int g2, int Cost)
 			chrono::steady_clock::time_point end = chrono::steady_clock::now();
 
 			long long time_spent_now = chrono::duration_cast<chrono::milliseconds>(end - begin).count();
-			
+
 			runtime += time_spent_now;
 			solver_computed[i]++;
 			solver_time[i].push_back(time_spent_now);
 
 			vector<vector<int> > found_plan;
-			int ret_val = solvers[i]->ReadResults(found_plan);
-			
+			int ret_val = solvers[i]->ReadResults(found_plan, Cost);
+
 			if (ret_val == 0)
 			{
 				// ok, we have good solution
@@ -250,45 +433,4 @@ int ID::PlanForGroups(int g1, int g2, int Cost)
 		}
 		timelimit *= 2;
 	}
-}
-
-void ID::FixPlan(vector<int>& agents_to_plan, vector<vector<int> >& found_plan)
-{
-	int old_makespan = current_plan[0].size();
-	int new_makespan = max(current_plan[0].size(), found_plan[0].size());
-
-	// fix current plan 
-	if (new_makespan > old_makespan)
-	{
-		for (size_t i = 0; i < current_plan.size(); i++)
-		{
-			current_plan[i].resize(new_makespan, inst->goal[i]);
-		}
-	}
-
-	// fix added plan
-	if (new_makespan > found_plan[0].size())
-	{
-		for (size_t i = 0; i < found_plan.size(); i++)
-		{
-			found_plan[i].resize(new_makespan, inst->goal[agents_to_plan[i]]);
-		}
-	}
-
-	// add new plan
-	for (size_t i = 0; i < agents_to_plan.size(); i++)
-	{
-		current_plan[agents_to_plan[i]] = found_plan[i];
-	}
-}
-
-
-int ID::CleanUp(int ret_val)
-{
-	for (size_t i = 0; i < solvers.size(); i++)
-		delete solvers[i];
-
-	delete single_path;
-
-	return ret_val;
-}
+}*/

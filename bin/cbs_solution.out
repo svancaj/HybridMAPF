@@ -1,0 +1,47 @@
+Reading file cbs_instance.in
+Computing the single agent shortest path for all agents...
+Solving Problem instance:0 Grid Name:Random Grid #Agents:12, GridCells:682, #Obstacles:342
+----------------- Solver: Basic-CBS/(A*/SIC) choosing cardinal conflicts using lookahead-----------------
+----------------- Instance: Problem instance:0 Grid Name:Random Grid #Agents:12, GridCells:682, #Obstacles:342-----------------
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Out of time
+Failed to solve
+Solution depth lower bound: 38
+
+Time In milliseconds: 20893,1721
+Found abnormal solution with negative cost
+Failed to solve this instance
+*********************THE END**************************

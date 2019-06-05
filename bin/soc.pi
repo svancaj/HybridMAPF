@@ -1,6 +1,7 @@
-% Static planner for multi-agent path finding for grid maps and the makespan objective
+% Static planner for multi-agent path finding for grid maps and the sum-of-costs objective
 % using train motion on agents
 % swap is forbidden
+% designed by Bartak
 
 import sat.
 
@@ -10,30 +11,28 @@ main([InsFile]) =>
     main.
 
 main =>
-    ins(Graph, As, Avoid, Cost, _),                   % read input
-    cl_facts(Graph,[$neibs(+,-)]),
-    N = len(Graph),                     % N = number of nodes
-    create_edges(N, E),					% E = number of edges
-    time(once(path(N,E,to_array(As),Avoid,Cost,Plan))),
-    output_plan(Plan).
-
-test =>
-    testins(Graph, As, Avoid, Cost, _),                   % read input
+    ins(Graph, As, Avoid, Mks, SoC),                   % read input
     cl_facts(Graph,[$neibs(+,-)]),
     N = len(Graph),                     % N = number of nodes
     create_edges(N, E),                 % E = number of edges
-    time(once(path(N,E,to_array(As),Avoid,Cost,Plan))),
-    output_plan(Plan).
+    time(once(path(N,E,to_array(As),Avoid,Mks,SoC))).
+
+test =>
+    testins(Graph, As, Avoid, Mks, SoC),                   % read input
+    cl_facts(Graph,[$neibs(+,-)]),
+    N = len(Graph),                     % N = number of nodes
+    create_edges(N, E),                 % E = number of edges
+    time(once(path(N,E,to_array(As),Avoid,Mks,SoC))).
 
 
 %%%%%%%%%%%%%%%%%%%%
 % MAIN COMPUTATION %
 %%%%%%%%%%%%%%%%%%%%
 
-path_for_delta(N,E,As,K,M,Avoid,B) =>
+path_for_delta(N,E,As,K,M,SocUB,Paths,Avoid,B,Cost) =>
     ME = M - 1,
 
-    printf("trying makespan %w\n",M),
+    printf("trying makespan %w with %w SoC UB\n",M, SocUB),
     B = new_array(M,K,N),
     C = new_array(ME,K,E),
 
@@ -45,17 +44,31 @@ path_for_delta(N,E,As,K,M,Avoid,B) =>
     foreach(A in 1..K)    
         (V,FV) = As[A],
         B[1,A,V] = 1,
-        B[M,A,FV] = 1,
-        preprocess_forward(A,V,M,N,B),
-        preprocess_backward(A,FV,M,N,B),
-        preprocess_sum(A,V,FV,M,N,B),
-        preprocess_edges(K,N,ME,B,E,C)
+        if Paths = {} then
+	        B[M,A,FV] = 1,
+	        preprocess_forward(A,V,M,N,B),
+	        preprocess_backward(A,FV,M,N,B),
+	        preprocess_edges(K,N,ME,B,E,C)
+	    else
+	    	Time = Paths[A] + 1 + SocUB,
+	        B[Time,A,FV] = 1,
+	        foreach (T in Time + 1..M, V1 in 1..N)
+	            if (V1 !== FV) then
+	                B[T,A,V1] = 0
+	            else
+	                B[T,A,FV] = 1
+	            end
+	        end,
+	        preprocess_forward(A,V,Time,N,B),
+	        preprocess_backward(A,FV,Time,N,B),
+	        preprocess_edges(K,N,ME,B,E,C)
+	    end
     end,
-
-    %printf("B %w\n",B),
 
     B :: 0..1,
     C :: 0..1,
+
+    %printf("B %w\n",B),
 
     % Each agent occupies up to one vertex at each time.
     foreach (T in 1..M, A in 1..K)
@@ -84,25 +97,68 @@ path_for_delta(N,E,As,K,M,Avoid,B) =>
         edge(EID,_,V),
         C[T,A,EID] #=> B[T+1,A,V] #= 1
     end,
+	
+    % Compute end times and weighted costs
+    end_time(B,As,K,M, ET),
+    Cost #= sum([ ET[I,J] : I in 1..K, J in 1..M]),
+    Cost #=< SocUB,
 
-    solve(B).   % minimizing sum-of-costs
+    solve($[min(Cost), threads, split],B).   % minimizing sum-of-costs % seq -- split
 
-path(N,E,As,Avoid,Cost,B) =>
+path(N,E,As,Avoid,Mks,SocUB) =>
     K = len(As),
+    add_paths(As,SOCLB),
+    get_shortest_paths(As,Paths),
 
-    if Cost == -1 then
-        lower_bound(to_list(As),LB),
-        between(LB+1,999999999,M)
+
+    if Mks == -1 then
+    	lower_bound(to_list(As),LB),
+    	between(LB+1,99999999,M),
+
+    	% find some solution for the problem that defines the upper bound for SOC (Cost)
+    	path_for_delta(N,E,As,K,M,K*M - SOCLB, {}, Avoid,  _, Cost1),
+
+    	% extend the makespan and a find the best SOC solution better or equal to Cost
+    	path_for_delta(N,E,As,K,LB+1+Cost1,Cost1, Paths, Avoid, B, Cost)
     else
-        M = Cost
+    	path_for_delta(N,E,As,K,Mks,SocUB - SOCLB, Paths, Avoid, B, Cost)
     end,
 
-    path_for_delta(N,E,As,K,M,Avoid,B).
+    output_plan(B,Cost + SOCLB,SOCLB).
 
 
 %%%%%%%%%%%%%%%%%%%%%
 % UTILITY FUNCTIONS %
 %%%%%%%%%%%%%%%%%%%%%
+
+%  ET[A,T]=1 iff agent A is late at time T (i.e. A is not at its destination at T for T > "lower bound for agent path")
+end_time(B,As,K,MaxT, ET) =>
+    ET = new_array(K,MaxT),
+    ET :: 0..1,
+    foreach (A in 1..K, T in 1..MaxT)
+        shortest_path_cost(As[A],Dist),
+        (_,FV) = As[A],
+        if T > Dist then 
+            #~ B[T,A,FV] #=> ET[A,T],  % agent is not at destination and hence it is late
+            #~ ET[A,T] #=> B[T,A,FV],  % agent is not late and hence must be at destination
+            if T < MaxT then 
+                #~ ET[A,T] #=> #~ ET[A,T+1]  % agent is not late at T and hence cannot be late at T+1
+            end
+        else
+            ET[A,T] = 0  % agent is not late at T because T =< "lower bound for agent path"
+        end
+    end.
+
+% sum of cost for shortest paths of all agents
+add_paths(As, Short) =>
+    Amax = len(As),
+    TmpShort = 0,
+    foreach(A in 1..Amax)
+        (V,VF) = As[A],
+        shortest_path_cost((V,VF),C),
+        TmpShort := TmpShort + C
+    end,
+    Short = TmpShort.
 
 % if there is another group to avoid, we must set B and C to 0 to prevent collisions
 preprocess_avoid(Avoid, B, C) =>
@@ -133,7 +189,6 @@ preprocess_avoid(Avoid, B, C) =>
         end
     end.
 
-
 % foreach vertex U, if U is at least distance D away from V,
 % then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
 preprocess_forward(A,V,MaxT,N,B) =>
@@ -155,30 +210,6 @@ preprocess_backward(A,FV,MaxT,N,B) =>
     foreach (U in 1..N, FV !== U)
         if shortest_path_cost((U,FV),Dist) then
             foreach (T1 in MaxT..-1..max(1,MaxT-Dist+1))
-                B[T1,A,U] = 0
-            end
-        end
-    end.
-
-% foreach vertex U, if U is at least distance D away from V,
-% then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
-preprocess_sum(A,V,FV,MaxT,N,B) =>
-    foreach (U in 1..N, V !== U, FV !== U)
-        if shortest_path_cost((V,U),Dist1) then
-            if shortest_path_cost((U,FV),Dist2) then
-                Dist = Dist1+Dist2,
-                if Dist >= MaxT then
-                    foreach (T1 in 1..MaxT)
-                        B[T1,A,U] = 0
-                    end
-                end
-            else
-                foreach (T1 in 1..MaxT)
-                    B[T1,A,U] = 0
-                end
-            end
-        else
-            foreach (T1 in 1..MaxT)
                 B[T1,A,U] = 0
             end
         end
@@ -217,6 +248,14 @@ lower_bound([],LB0,LB) => LB = LB0.
 lower_bound([(V,FV)|As],LB0,LB) =>
     shortest_path_cost((V,FV),Cost),
 	lower_bound(As,max(LB0,Cost),LB).
+
+get_shortest_paths(As,Paths) =>
+    TmpPaths = {},
+    foreach(A in 1..len(As))
+        shortest_path_cost(As[A],Cost),
+        TmpPaths := TmpPaths ++ {Cost}
+    end,
+    Paths = TmpPaths.
 
 table (+,min)
 shortest_path_cost((0,_),Cost) => Cost = 0.
@@ -270,30 +309,46 @@ out_edges(W,E,EList) =>
 	end,
 	EList = ETMP.
 
-output_plan(B) =>
+output_plan(B,Cost,SocLB) =>
     M = len(B) - 1,
     K = len(B[1]),
     N = len(B[1,1]),
+    printf("SocLB %w\n",SocLB),
+    printf("Cost %w\n",Cost),
     printf("agents | timesteps\n"),
     printf("%w %w\n",K,M+1),
-    %printf("timesteps %w\n",M+1),
-	foreach (A in 1..K)
-		foreach (T in 1..M+1)
-			foreach (V in 1..N)
-				if B[T,A,V] == 1 then
-					printf("%w ",V)
-				end
-			end
-		end,
-        nl
-	end.
+    foreach (A in 1..K)
+        foreach (T in 1..M+1)
+            BTest := 0,
+            foreach (V in 1..N)
+                if B[T,A,V] == 1 then
+                    printf("%w",V),
+                    BTest := 1
+                end
+            end,
+            if BTest == 0 then
+                printf("O")
+            end,
+            if T <= M then
+                print(" ")
+            else
+                nl
+            end
+        end
+    end.
 
 
 %%%%%%%%%%%%%%%
 % TEST INPUTS %
 %%%%%%%%%%%%%%%
 
-testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
+% G is the number of nodes in the original graph. The other edges form the "tunnels" for agents that will appear later
+% G is used to compute the objective function, since we do not count the agents until they are in the original graph
+% $edge(id, from, to)
+% As are agents - the third parameter is timestep when they appear.
+% If it is equal to 1 and in the first G nodes, they are in the static part of the problem
+
+testins2(Graph, As, Avoid, Makespan, SumOfCosts) =>
     Graph = [
     $neibs(1,[1,3]),
     $neibs(2,[2,3]),
@@ -311,10 +366,71 @@ testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
     Avoid[5,1] = 2,
     Avoid[6,1] = 2,
     Makespan = 6,
+    SumOfCosts = 5.
+
+
+testins1(Graph, As, Avoid, Makespan, SumOfCosts) =>
+    Graph = [
+    $neibs(1,[1,8,2]),
+    $neibs(2,[2,1,9,3]),
+    $neibs(3,[3,2,10]),
+    $neibs(4,[4,5]),
+    $neibs(5,[5,4,12,6]),
+    $neibs(6,[6,5,13,7]),
+    $neibs(7,[7,6,14]),
+    $neibs(8,[8,1,15,9]),
+    $neibs(9,[9,2,8,16,10]),
+    $neibs(10,[10,3,9,17,11]),
+    $neibs(11,[11,10]),
+    $neibs(12,[12,5,13]),
+    $neibs(13,[13,6,12,18,14]),
+    $neibs(14,[14,7,13,19]),
+    $neibs(15,[15,8,16]),
+    $neibs(16,[16,9,15,20,17]),
+    $neibs(17,[17,10,16,21]),
+    $neibs(18,[18,13,25,19]),
+    $neibs(19,[19,14,18,26]),
+    $neibs(20,[20,16,28,21]),
+    $neibs(21,[21,17,20,29,22]),
+    $neibs(22,[22,21,23]),
+    $neibs(23,[23,22,30,24]),
+    $neibs(24,[24,23,31,25]),
+    $neibs(25,[25,18,24,32,26]),
+    $neibs(26,[26,19,25]),
+    $neibs(27,[27,33,28]),
+    $neibs(28,[28,20,27,29]),
+    $neibs(29,[29,21,28,34]),
+    $neibs(30,[30,23,35,31]),
+    $neibs(31,[31,24,30,36,32]),
+    $neibs(32,[32,25,31,37]),
+    $neibs(33,[33,27]),
+    $neibs(34,[34,29,40]),
+    $neibs(35,[35,30,42,36]),
+    $neibs(36,[36,31,35,37]),
+    $neibs(37,[37,32,36,43,38]),
+    $neibs(38,[38,37,44]),
+    $neibs(39,[39,46,40]),
+    $neibs(40,[40,34,39,47,41]),
+    $neibs(41,[41,40,48,42]),
+    $neibs(42,[42,35,41,49]),
+    $neibs(43,[43,37,51,44]),
+    $neibs(44,[44,38,43,52]),
+    $neibs(45,[45,46]),
+    $neibs(46,[46,39,45,47]),
+    $neibs(47,[47,40,46,48]),
+    $neibs(48,[48,41,47,49]),
+    $neibs(49,[49,42,48,50]),
+    $neibs(50,[50,49,51]),
+    $neibs(51,[51,43,50,52]),
+    $neibs(52,[52,44,51])
+    ],
+    As = [(33,17),(40,38),(10,43),(51,8),(11,37),(23,24),(36,12),(24,23)],
+    Avoid = new_array(0,0),
+    Makespan = -1,
     SumOfCosts = -1.
 
 
-testins2(Graph, As, Avoid, Makespan, SumOfCosts) =>
+testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
     Graph = [
     $neibs(1,[1,20,2]),
     $neibs(2,[2,21,1,3]),
@@ -680,7 +796,10 @@ testins2(Graph, As, Avoid, Makespan, SumOfCosts) =>
     $neibs(362,[362,342,361,363]),
     $neibs(363,[363,343,362])
     ],
-    As = [(36,38),(37,34)],
-    Avoid = new_array(0,0),
-    Makespan = -1,
-    SumOfCosts = -1.
+    As = [(36,38)],
+    Avoid = new_array(3,1),
+    Avoid[1,1] = 37,
+    Avoid[2,1] = 36,
+	Avoid[3,1] = 36,
+    Makespan = 3,
+    SumOfCosts = 2.

@@ -1,3 +1,5 @@
+#include <thread>
+
 #include "instance.h"
 #include "Solver.h"
 #include "Picat.h"
@@ -10,16 +12,23 @@
 class ID
 {
 public:
-	ID(Instance*);
+	ID(Instance*, int);
+	~ID();
 	int SolveProblem(int solver = -1);
+
+
+	// statistic variables
+	std::vector<int> solver_computed;
+	std::vector<int> solver_used;
+	std::vector<std::vector<long long> > solver_time;
+	int final_makespan;
+	int final_soc;
 
 private:
 	Instance* inst;
 	Dijkstra* single_path;
 	std::vector<Solver*> solvers;
-	std::vector<int> solver_computed;
-	std::vector<int> solver_used;
-	std::vector<std::vector<long long> > solver_time;
+	int cost_function; // 1 - Makespan, 2 - Sum of Costs
 
 	std::vector<std::vector<int> > groups;
 	std::vector<int> agent_to_group;

@@ -9,7 +9,7 @@ public:
 	virtual void Solve(std::vector<int>&, std::vector<std::vector<int> >&, int, long long) = 0;
 
 	// 0 - ok, 1 - no solution, x - timeout or error
-	virtual int ReadResults(std::vector<std::vector<int> >&) = 0;
+	virtual int ReadResults(std::vector<std::vector<int> >&, int) = 0;
 };
 
 #endif /* SOLVER_H */

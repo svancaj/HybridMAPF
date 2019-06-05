@@ -2,12 +2,18 @@
 
 using namespace std;
 
-PicatSolver::PicatSolver(Instance* in)
+PicatSolver::PicatSolver(Instance* in, int cf)
 {
 	// parameters
 	solver_input = "picat_instance.pi";
 	solver_output = "picat_solution.out";
-	solver_name = "mks";
+
+	cost_function = cf;
+
+	if (cost_function == 1)
+		solver_name = "mks";
+	if (cost_function == 2)
+		solver_name = "soc";
 
 	inst = in;
 }
@@ -18,7 +24,7 @@ void PicatSolver::Solve(vector<int>& agents_to_plan, vector<vector<int> >& agent
 	picat.open(solver_input);
 	if (!picat.is_open())
 		cout << "fail" << endl;
-	picat << "ins(Graph, As, Avoid, Cost) =>" << endl;
+	picat << "ins(Graph, As, Avoid, Makespan, SumOfCosts) =>" << endl;
 	picat << "    Graph = [" << endl;
 	for (size_t i = 0; i < inst->graph.size(); i++)
 	{
@@ -44,16 +50,65 @@ void PicatSolver::Solve(vector<int>& agents_to_plan, vector<vector<int> >& agent
 	picat << "]," << endl;
 
 	// avoid
-	picat << "    Avoid = new_array(" << max(Cost, 0) << "," << agents_to_avoid.size() << ")," << endl;
-	for (size_t i = 0; i < agents_to_avoid.size(); i++)
+	if (Cost < 0)
 	{
-		for (size_t j = 0; j < agents_to_avoid[i].size(); j++)
-		{
-			picat << "    Avoid[" << j + 1 << "," << i + 1 << "] = " << agents_to_avoid[i][j] + 1 << "," << endl;
-		}
+		picat << "    Avoid = new_array(0,0)," << endl;
+		picat << "    Makespan = -1," << endl;
+		picat << "    SumOfCosts = -1." << endl;
 	}
+	else if (cost_function == 1) // makespan optimal
+	{
+		picat << "    Avoid = new_array(" << Cost << "," << agents_to_avoid.size() << ")," << endl;
+		for (size_t i = 0; i < agents_to_avoid.size(); i++)
+		{
+			for (size_t j = 0; j < Cost; j++)
+			{
+				picat << "    Avoid[" << j + 1 << "," << i + 1 << "] = " << agents_to_avoid[i][j] + 1 << "," << endl;
+			}
+		}
+		picat << "    Makespan = " << Cost << "," << endl;
+		picat << "    SumOfCosts = -1." << endl;
+	}
+	else // SoC optimal
+	{
+		int max_timestep_to_avoid = 0;
+		for (size_t i = 0; i < agents_to_avoid.size(); i++)
+		{
+			for (size_t j = agents_to_avoid[i].size() - 1; j > 0; j--)
+			{
+				if (agents_to_avoid[i][j] != agents_to_avoid[i][j - 1])
+				{
+					max_timestep_to_avoid = max(max_timestep_to_avoid, (int)j + 1);
+					break;
+				}
+			}
+		}
 
-	picat << "    Cost = " << Cost << "." << endl;
+		int mksLB = 0;
+		int socLB = 0;
+		for (size_t i = 0; i < agents_to_plan.size(); i++)
+		{
+			mksLB = max(mksLB, inst->distance[inst->start[agents_to_plan[i]]][inst->goal[agents_to_plan[i]]]) + 1;
+			socLB += inst->distance[inst->start[agents_to_plan[i]]][inst->goal[agents_to_plan[i]]];
+		}
+		int makespan = max(max_timestep_to_avoid, mksLB + Cost - socLB);
+
+		picat << "    Avoid = new_array(" << makespan << "," << agents_to_avoid.size() << ")," << endl;
+		for (size_t i = 0; i < agents_to_avoid.size(); i++)
+		{
+			for (size_t j = 0; j < max_timestep_to_avoid; j++)
+			{
+				picat << "    Avoid[" << j + 1 << "," << i + 1 << "] = " << agents_to_avoid[i][j] + 1 << "," << endl;
+			}
+			for (size_t j = max_timestep_to_avoid; j < makespan; j++)
+			{
+				picat << "    Avoid[" << j + 1 << "," << i + 1 << "] = " << agents_to_avoid[i][agents_to_avoid[i].size() - 1] + 1 << "," << endl;
+			}
+		}
+
+		picat << "    Makespan = " << makespan << "," << endl;
+		picat << "    SumOfCosts = " << Cost << "." << endl;
+	}
 
 	picat.close();
 
@@ -66,7 +121,7 @@ void PicatSolver::Solve(vector<int>& agents_to_plan, vector<vector<int> >& agent
 }
 
 
-int PicatSolver::ReadResults(vector<vector<int> >& plan)
+int PicatSolver::ReadResults(vector<vector<int> >& plan, int cost)
 {
 	// read output
 	string line;
@@ -77,7 +132,6 @@ int PicatSolver::ReadResults(vector<vector<int> >& plan)
 	ifstream input(solver_output);
 	if (input.is_open())
 	{
-		// TODO - read agents and makespan correctly
 		while (getline(input, line))
 		{
 			// ok solution

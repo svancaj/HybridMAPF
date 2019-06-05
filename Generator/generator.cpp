@@ -8,136 +8,90 @@
 
 #include "maps.h"
 
-void ParseMap(vector<vector<char> >&, vector<int>&, vector<int>&);
-int create(int, int, int, int);
-
 using namespace std;
+
+constexpr int AGENTS = 40;
+
+int create(int, int, int);
+void set_agents(vector<vector<char> >&, vector<pair<int, int> >&, vector<pair<int, int> >&, int);
+bool contains(vector<pair<int, int> >&, int, int);
 
 int main()
 {
-	vector<int> map = {1};
-	vector<int> picat_ag = {15};
-	vector<int> cbs_ag = {10};
-	int number_of_instances = 5;
+	vector<int> map = {2,3};
+	vector<int> locations = {1,2}; // 1 = random, 2 = centered
+	int number_of_instances = 10;
+
+	srand(time(NULL));
 
 	for (int i = 0; i < map.size(); i++)
-		for (int j = 0; j < picat_ag.size(); j++)
-			for (int k = 0; k < cbs_ag.size(); k++)
-				create(number_of_instances, map[i], picat_ag[j], cbs_ag[k]);
+		for (int j = 0; j < locations.size(); j++)
+		create(number_of_instances, map[i], locations[j]);
 }
 
-int create(int number_of_instances, int map_type, int picat_agents, int cbs_agents)
+int create(int number_of_instances, int map_type, int locations_type)
 {
 	vector<vector<char> > map;
-	vector<int> cbs_nodes;
-	vector<int> picat_nodes;
+	string map_name;
+	string locations_name;
 	switch (map_type)
 	{
 	case 1:
 		map = map1;
+		map_name = "test";
+		break;
+	case 2:
+		map = map2;
+		map_name = "maze-16-16-2";
+		break;
+	case 3:
+		map = map3;
+		map_name = "room-16-16-2";
 		break;
 	default:
 		cout << "Illegal type of map!" << endl;
 		return -1;
 	}
 
-	ParseMap(map, cbs_nodes, picat_nodes);
-
+	switch (locations_type)
+	{
+	case 1:
+		locations_name = "random";
+		break;
+	case 2:
+		locations_name = "grouped";
+		break;
+	default:
+		cout << "Illegal starting and goal type of map!" << endl;
+		return -1;
+	}
+	
 	for (int instance_nr = 0; instance_nr < number_of_instances; instance_nr++)
 	{
 		// name
 		stringstream ss;
-		ss << "IntersectionType" << map_type << "_" << cbs_agents << "_" << picat_agents << "_" << instance_nr << ".in";
+		ss << map_name << "-" << locations_name << "-" << instance_nr << ".scen";
 		string filename = ss.str();
 
 		// start and goals
-		vector<int> cbs_start;
-		vector<int> cbs_goal;
-		vector<int> picat_start;
-		vector<int> picat_goal;
+		vector<pair<int, int> > start;
+		vector<pair<int, int> > goal;
 
-		srand(time(NULL));
-
-		int added = 0;
-		while (added < picat_agents)
-		{
-			int start_node = rand() % picat_nodes.size();
-			while (picat_nodes[start_node] < 0 || find(picat_start.begin(), picat_start.end(), picat_nodes[start_node]) != picat_start.end())
-			{
-				start_node = rand() % picat_nodes.size();
-			}
-			picat_start.push_back(picat_nodes[start_node]);
-
-			int end_node = rand() % picat_nodes.size();
-			while (picat_nodes[end_node] < 0 || find(picat_goal.begin(), picat_goal.end(), picat_nodes[end_node]) != picat_goal.end())
-			{
-				end_node = rand() % picat_nodes.size();
-			}
-			picat_goal.push_back(picat_nodes[end_node]);
-			added++;
-		}
-
-		added = 0;
-		while (added < cbs_agents)
-		{
-			int start_node = rand() % cbs_nodes.size();
-			while (cbs_nodes[start_node] < 0 || find(cbs_start.begin(), cbs_start.end(), cbs_nodes[start_node]) != cbs_start.end())
-			{
-				start_node = rand() % cbs_nodes.size();
-			}
-			cbs_start.push_back(cbs_nodes[start_node]);
-
-			int end_node = rand() % cbs_nodes.size();
-			while (cbs_nodes[end_node] < 0 || find(cbs_goal.begin(), cbs_goal.end(), cbs_nodes[end_node]) != cbs_goal.end())
-			{
-				end_node = rand() % cbs_nodes.size();
-			}
-			cbs_goal.push_back(cbs_nodes[end_node]);
-			added++;
-		}
+		set_agents(map, start, goal, locations_type);
 
 		// print
 		ofstream out1(string("../instances/").append(filename));
 		streambuf *coutbuf1 = cout.rdbuf(); //save old buf
 		cout.rdbuf(out1.rdbuf()); //redirect std::cerr to out.txt!
 
-		cout << map.size() << "," << map[0].size() << endl;
-		for (size_t i = 0; i < map.size(); i++)
+		cout << "version 1" << endl;
+
+		for (size_t i = 0; i < start.size(); i++)
 		{
-			for (size_t j = 0; j < map[i].size(); j++)
-			{
-				if (map[i][j] == '@')
-					cout << "@";
-				else
-					cout << ".";
-			}
-			cout << endl;
+			cout << "0\t" << map_name << ".map\t" << map.size() << "\t" << map.size() << "\t";
+			cout << start[i].second << "\t" << start[i].first << "\t" << goal[i].second << "\t" << goal[i].first << "\t";
+			cout << "0" << endl;
 		}
-		
-		cout << "Agents:" << endl;
-		cout << cbs_agents + picat_agents << endl;
-		for (size_t i = 0; i < picat_goal.size(); i++)
-			cout << picat_start[i] << " " << picat_goal[i] << endl;
-		for (size_t i = 0; i < cbs_goal.size(); i++)
-			cout << cbs_start[i] << " " << cbs_goal[i] << endl;
-
-		cout << "Picat:" << endl;
-		cout << picat_agents << endl;
-		for (size_t i = 0; i < picat_goal.size(); i++)
-			cout << i << " ";
-		cout << endl << picat_nodes.size() << endl;
-		for (size_t i = 0; i < picat_nodes.size(); i++)
-			cout << abs(picat_nodes[i]) << " ";
-		cout << endl;
-
-		cout << "CBS:" << endl;
-		cout << cbs_agents << endl;
-		for (size_t i = 0; i < cbs_goal.size(); i++)
-			cout << picat_agents + i << " ";
-		cout << endl << cbs_nodes.size() << endl;
-		for (size_t i = 0; i < cbs_nodes.size(); i++)
-			cout << abs(cbs_nodes[i]) << " ";
-		cout << endl;
 		
 		cout.rdbuf(coutbuf1); //reset to standard output again
 	}
@@ -145,26 +99,100 @@ int create(int number_of_instances, int map_type, int picat_agents, int cbs_agen
 	//("pause");
 }
 
-void ParseMap(vector<vector<char> >& map, vector<int>& cbs, vector<int>& picat)
+void set_agents(vector<vector<char> >& map, vector<pair<int, int> >& start, vector<pair<int, int> >& goal, int locations_type)
 {
-	int node = 0;
-	
-	for (size_t i = 0; i < map.size(); i++)
+	if (locations_type == 1) // random
 	{
-		for (size_t j = 0; j < map[i].size(); j++)
+		int placed = 0;
+		while (placed < AGENTS)
 		{
-			if (map[i][j] == '.')
-			{
-				picat.push_back(-node);
-				cbs.push_back(-node);
-			}
-			if (map[i][j] == '@')
+			int x = rand() % map.size();
+			int y = rand() % map.size();
+			if (map[x][y] == '@')
 				continue;
-			if (map[i][j] == 'c')
-				cbs.push_back(node);
-			if (map[i][j] == 'p')
-				picat.push_back(node);
-			node++;
+			if (contains(start, x, y))
+				continue;
+			start.push_back(make_pair(x, y));
+			placed++;
+		}
+
+		placed = 0;
+		while (placed < AGENTS)
+		{
+			int x = rand() % map.size();
+			int y = rand() % map.size();
+			if (map[x][y] == '@')
+				continue;
+			if (contains(goal, x, y))
+				continue;
+			goal.push_back(make_pair(x, y));
+			placed++;
 		}
 	}
+
+	if (locations_type == 2) // half is grouped
+	{
+		int placed = 0;
+		while (placed < AGENTS)
+		{
+			if (placed % 2) // random
+			{
+				int x = rand() % map.size();
+				int y = rand() % map.size();
+				if (map[x][y] == '@')
+					continue;
+				if (contains(start, x, y))
+					continue;
+				start.push_back(make_pair(x, y));
+				placed++;
+			}
+			else // center
+			{
+				int x = rand() % (map.size() / 2);
+				int y = rand() % (map.size() / 2);
+				if (map[x][y] == '@')
+					continue;
+				if (contains(start, x, y))
+					continue;
+				start.push_back(make_pair(x, y));
+				placed++;
+			}
+		}
+
+		placed = 0;
+		while (placed < AGENTS)
+		{
+			if (placed % 2) // random
+			{
+				int x = rand() % map.size();
+				int y = rand() % map.size();
+				if (map[x][y] == '@')
+					continue;
+				if (contains(goal, x, y))
+					continue;
+				goal.push_back(make_pair(x, y));
+				placed++;
+			}
+			else // center
+			{
+				int x = rand() % (map.size() / 2);
+				int y = rand() % (map.size() / 2);
+				if (map[x][y] == '@')
+					continue;
+				if (contains(goal, x, y))
+					continue;
+				goal.push_back(make_pair(x, y));
+				placed++;
+			}
+		}
+	}
+}
+
+
+bool contains(vector<pair<int, int> >& vc, int x, int y)
+{
+	for (size_t i = 0; i < vc.size(); i++)
+		if (vc[i].first == x && vc[i].second == y)
+			return true;
+	return false;
 }
