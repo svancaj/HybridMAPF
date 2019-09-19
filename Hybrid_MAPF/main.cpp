@@ -5,6 +5,13 @@
 #include "Picat.h"
 #include "ID.h"
 
+#define MAKESPAN 1
+#define SOC 2
+
+#define FULL_ID 1
+#define SIMPLE_ID 0
+
+
 using namespace std;
 
 void PrintStatistic(int, ID*, Instance*, string, string);
@@ -12,8 +19,9 @@ void PrintStatistic(int, ID*, Instance*, string, string);
 int main()
 {
 	DIR *dir1;
-	int test;
 	struct dirent *ent1;
+	int ID_type = FULL_ID;
+	int cost_function = SOC;
 	if ((dir1 = opendir("../instances")) != NULL)
 	{
 		while ((ent1 = readdir(dir1)) != NULL)
@@ -24,79 +32,60 @@ int main()
 			// Read input
 			Instance* inst = new Instance();
 			inst->ReadInput(string("../instances/").append(string(ent1->d_name)));
+
+			// Create solver
+			ID* Solver = new ID(inst, cost_function, ID_type);
+			int ret_val;
+
+			string function_name;
+			if (cost_function == SOC)
+				function_name = "soc";
+			else
+				function_name = "mks";
 			
-			// Makespan
-			ID* Solver_mks = new ID(inst, 1);
-			int ret_val_mks = 0;
-			
+
 			// Solve the instance - use only Picat
-			ret_val_mks = 0;
+			ret_val = 0;
 			inst->ResetAgentsNumber();
-			while (ret_val_mks == 0)
+			while (ret_val == 0 && inst->agents <= inst->start.size())
 			{
+				ret_val = Solver->SolveProblem(vector<bool> {true,false,false});
+				PrintStatistic(ret_val, Solver, inst, "Picat", function_name);
 				inst->IncreaseAgentsNumber();
-				ret_val_mks = Solver_mks->SolveProblem(1);
-				PrintStatistic(ret_val_mks, Solver_mks, inst, "Picat", "mks");
 			}
 
 			// Solve the instance - use only CBS
-			ret_val_mks = 0;
+			ret_val = 0;
 			inst->ResetAgentsNumber();
-			while (ret_val_mks == 0)
+			while (ret_val == 0 && inst->agents <= inst->start.size())
 			{
+				ret_val = Solver->SolveProblem(vector<bool> {false, true, false});
+				PrintStatistic(ret_val, Solver, inst, "CBS", function_name);
 				inst->IncreaseAgentsNumber();
-				ret_val_mks = Solver_mks->SolveProblem(2);
-				PrintStatistic(ret_val_mks, Solver_mks, inst, "CBS", "mks");
-			}
-			
-			// Solve the instance - use both algorithms
-			/*ret_val_mks = 0;
-			inst->ResetAgentsNumber();
-			while (ret_val_mks == 0)
-			{
-				inst->IncreaseAgentsNumber();
-				ret_val_mks = Solver_mks->SolveProblem();
-				PrintStatistic(ret_val_mks, Solver_mks, inst, "Hybrid", "mks");
-			}*/
-			
-			// Sum of Costs
-			/*ID* Solver_soc = new ID(inst, 2);
-			int ret_val_soc = 0;
-
-			// Solve the instance - use only Picat
-			ret_val_soc = 0;
-			inst->ResetAgentsNumber();
-			while (ret_val_soc == 0)
-			{
-				inst->IncreaseAgentsNumber();
-				ret_val_soc = Solver_soc->SolveProblem(1);
-				PrintStatistic(ret_val_soc, Solver_soc, inst, "Picat", "soc");
 			}
 
-			// Solve the instance - use only CBS
-			ret_val_soc = 0;
+			// Solve the instance - use only ICTS
+			ret_val = 0;
 			inst->ResetAgentsNumber();
-			while (ret_val_soc == 0)
+			while (ret_val == 0 && inst->agents <= inst->start.size())
 			{
+				ret_val = Solver->SolveProblem(vector<bool> {false, false, true});
+				PrintStatistic(ret_val, Solver, inst, "ICTS", function_name);
 				inst->IncreaseAgentsNumber();
-				ret_val_soc = Solver_soc->SolveProblem(2);
-				PrintStatistic(ret_val_soc, Solver_soc, inst, "CBS", "soc");
 			}
-
-			// Solve the instance - use both algorithms
-			ret_val_soc = 0;
-			inst->ResetAgentsNumber();
-			while (ret_val_soc == 0)
-			{
-				inst->IncreaseAgentsNumber();
-				ret_val_soc = Solver_soc->SolveProblem();
-				PrintStatistic(ret_val_soc, Solver_soc, inst, "Hybrid", "soc");
-			}*/
 			
+			// Solve the instance - use all algorithms
+			ret_val = 0;
+			inst->ResetAgentsNumber();
+			while (ret_val == 0 && inst->agents <= inst->start.size())
+			{
+				ret_val = Solver->SolveProblem(vector<bool> {true, true, true});
+				PrintStatistic(ret_val, Solver, inst, "Hybrid", function_name);
+				inst->IncreaseAgentsNumber();
+			}		
 
 			delete inst;
-			delete Solver_mks;
-			//delete Solver_soc;
+			delete Solver;
 
 			string executable;
 			executable = string("move ../instances/").append(string(ent1->d_name)).append(" ../instances/solved");
@@ -115,21 +104,27 @@ void PrintStatistic(int ret_val, ID* Solver, Instance* inst, string solver_type,
 
 	int cbs_computed = 0;
 	int picat_computed = 0;
+	int icts_computed = 0;
 	int cbs_used = 0;
 	int picat_used = 0;
+	int icts_used = 0;
 	long long cbs_time = 0;
 	long long picat_time = 0;
+	long long icts_time = 0;
 
 	if (solver_type.compare("Hybrid") == 0)
 	{
-		cbs_computed = Solver->solver_computed[0];
-		picat_computed = Solver->solver_computed[1];
+		picat_computed = Solver->solver_computed[0];
+		cbs_computed = Solver->solver_computed[1];
+		icts_computed = Solver->solver_computed[2];
 
-		cbs_used = Solver->solver_used[0];
-		picat_used = Solver->solver_used[1];
+		picat_used = Solver->solver_used[0];
+		cbs_used = Solver->solver_used[1];
+		icts_used = Solver->solver_used[2];
 
-		cbs_time = accumulate(Solver->solver_time[0].begin(), Solver->solver_time[0].end(), 0);
-		picat_time = accumulate(Solver->solver_time[1].begin(), Solver->solver_time[1].end(), 0);
+		picat_time = accumulate(Solver->solver_time[0].begin(), Solver->solver_time[0].end(), 0);
+		cbs_time = accumulate(Solver->solver_time[1].begin(), Solver->solver_time[1].end(), 0);
+		icts_time = accumulate(Solver->solver_time[2].begin(), Solver->solver_time[2].end(), 0);
 	}
 	else if (solver_type.compare("CBS") == 0)
 	{
@@ -146,6 +141,14 @@ void PrintStatistic(int ret_val, ID* Solver, Instance* inst, string solver_type,
 		picat_used = Solver->solver_used[0];
 
 		picat_time = accumulate(Solver->solver_time[0].begin(), Solver->solver_time[0].end(), 0);
+	}
+	else if (solver_type.compare("ICTS") == 0)
+	{
+		icts_computed = Solver->solver_computed[0];
+
+		icts_used = Solver->solver_used[0];
+
+		icts_time = accumulate(Solver->solver_time[0].begin(), Solver->solver_time[0].end(), 0);
 	}
 
 	statistic.open(inst->statistic_file, ofstream::out | ofstream::app);
@@ -175,17 +178,20 @@ void PrintStatistic(int ret_val, ID* Solver, Instance* inst, string solver_type,
 		// how many times each solver was computed
 		statistic << cbs_computed << delimiter;
 		statistic << picat_computed << delimiter;
+		statistic << icts_computed << delimiter;
 
 		// how many times each solver was used
 		statistic << cbs_used << delimiter;
 		statistic << picat_used << delimiter;
+		statistic << icts_used << delimiter;
 
 		// how much time each solver take
 		statistic << cbs_time << delimiter;
 		statistic << picat_time << delimiter;
+		statistic << icts_time << delimiter;
 
 		// how much time it take together - should be just added the two previous
-		statistic << cbs_time + picat_time;
+		statistic << cbs_time + picat_time + icts_time;
 
 		statistic << endl;
 

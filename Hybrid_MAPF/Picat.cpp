@@ -114,7 +114,7 @@ void PicatSolver::Solve(vector<int>& agents_to_plan, vector<vector<int> >& agent
 
 	// solve by picat
 	stringstream ss_exec;
-	ss_exec << "bash -c \'timeout " << (int)(timeout_ms/1000) << " ./picat " << solver_name << " " << solver_input << "' > " << solver_output;
+	ss_exec << "bash -c \'timeout " << (int)(timeout_ms/1000) << " ./picat " << solver_name << " " << solver_input << "' > " << solver_output << " 2>&1";
 	string execute = ss_exec.str();
 	cout << execute << endl;
 	system(execute.c_str());

@@ -19,14 +19,14 @@ bool contains(vector<pair<int, int> >&, int, int);
 int main()
 {
 	vector<int> map = {2,3};
-	vector<int> locations = {1,2}; // 1 = random, 2 = centered
-	int number_of_instances = 10;
+	vector<int> locations = {2}; // 1 = random, 2 = centered
+	int number_of_instances = 5;
 
 	srand(time(NULL));
 
 	for (int i = 0; i < map.size(); i++)
 		for (int j = 0; j < locations.size(); j++)
-		create(number_of_instances, map[i], locations[j]);
+			create(number_of_instances, map[i], locations[j]);
 }
 
 int create(int number_of_instances, int map_type, int locations_type)
@@ -47,6 +47,18 @@ int create(int number_of_instances, int map_type, int locations_type)
 	case 3:
 		map = map3;
 		map_name = "room-16-16-2";
+		break;
+	case 4:
+		map = map4;
+		map_name = "room-32-32-4";
+		break;
+	case 5:
+		map = map5;
+		map_name = "maze-32-32-2";
+		break;
+	case 6:
+		map = map6;
+		map_name = "random-32-32-20";
 		break;
 	default:
 		cout << "Illegal type of map!" << endl;

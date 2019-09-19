@@ -4,6 +4,7 @@
 #include "Solver.h"
 #include "Picat.h"
 #include "CBS.h"
+#include "ICTS.h"
 #include "Dijkstra.h"
 
 #ifndef ID_H
@@ -12,9 +13,9 @@
 class ID
 {
 public:
-	ID(Instance*, int);
+	ID(Instance*, int, int);
 	~ID();
-	int SolveProblem(int solver = -1);
+	int SolveProblem(const std::vector<bool>& = {true,true,true});
 
 
 	// statistic variables
@@ -29,6 +30,7 @@ private:
 	Dijkstra* single_path;
 	std::vector<Solver*> solvers;
 	int cost_function; // 1 - Makespan, 2 - Sum of Costs
+	int full_ID; // 0 - simple ID, 1 - full ID
 
 	std::vector<std::vector<int> > groups;
 	std::vector<int> agent_to_group;

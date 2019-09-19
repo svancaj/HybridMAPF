@@ -13,7 +13,7 @@ main =>
     ins(Graph, As, Avoid, Cost, _),                   % read input
     cl_facts(Graph,[$neibs(+,-)]),
     N = len(Graph),                     % N = number of nodes
-    create_edges(N, E),					% E = number of edges
+    create_edges(N, E),                 % E = number of edges
     time(once(path(N,E,to_array(As),Avoid,Cost,Plan))),
     output_plan(Plan).
 
@@ -41,16 +41,22 @@ path_for_delta(N,E,As,K,M,Avoid,B) =>
         preprocess_avoid(Avoid, B, C)
     end,
 
+    %printf("arrays completed!\n"),
+
     % Initialize the first and last states
     foreach(A in 1..K)    
         (V,FV) = As[A],
         B[1,A,V] = 1,
         B[M,A,FV] = 1,
-        preprocess_forward(A,V,M,N,B),
-        preprocess_backward(A,FV,M,N,B),
-        preprocess_sum(A,V,FV,M,N,B),
-        preprocess_edges(K,N,ME,B,E,C)
+        preprocess_forward(A,V,FV,M,N,B),
+        %printf("^ time of preprocess forward\n"),
+        preprocess_backward(A,V,FV,M,N,B),
+        %printf("^ time of preprocess backward\n"),
+        preprocess_edges(K,N,ME,B,E,C),
+        %printf("^ time of preprocess edges\n")
     end,
+
+    %printf("preprocessing done!\n"),
 
     %printf("B %w\n",B),
 
@@ -69,23 +75,28 @@ path_for_delta(N,E,As,K,M,Avoid,B) =>
 
     % if an edge is used in one direction, it can not be used in the other direction (no swap)
     foreach(T in 1..ME, EID in 1..E) 
-    	oposit_edges(EID, E, EList),
+        edgeid(EID, U, V),
+    	edge(OppositeEID, V, U),
+        EList = remove_dups([EID,OppositeEID]),
     	sum([C[T,A,W] : A in 1..K, W in EList]) #=< 1   
     end,
 
     % if an agent is in a node, it needs to move through one of the edges from that node
     foreach(T in 1..ME, A in 1..K, V in 1..N) 
-    	out_edges(V,E,EList),
+    	out_edges(V,EList),
         B[T,A,V] #=> sum([C[T,A,W] : W in EList]) #= 1
     end,
 
     % if agent is using an edge, it must arrive to the connected node in next timestep
     foreach(T in 1..ME, A in 1..K, EID in 1..E) 
-        edge(EID,_,V),
+        edgeid(EID,_,V),
         C[T,A,EID] #=> B[T+1,A,V] #= 1
     end,
 
-    solve(B).   % minimizing sum-of-costs
+    %printf("solving start\n"),
+
+    solve(B).
+    %printf("^ time of SAT solving\n").
 
 path(N,E,As,Avoid,Cost,B) =>
     K = len(As),
@@ -118,17 +129,11 @@ preprocess_avoid(Avoid, B, C) =>
     % edges
     foreach (T in 1..len(C))
         foreach (A1 in 1..len(Avoid[T]))
-            foreach (EID in 1..len(C[1,1]))
-                edge(EID, U, V),
-                if U == Avoid[T,A1], V == Avoid[T+1,A1] then
-                    oposit_edges(EID, len(C[1,1]), EList),
-                    Earr = to_array(EList),
-                    foreach (A in 1..len(C[T]))
-                        foreach (Edge in 1..len(Earr))
-                            C[T,A,Earr[Edge]] = 0
-                        end
-                    end
-                end
+            edge(EID1, Avoid[T,A1], Avoid[T+1,A1]),
+            edge(EID2, Avoid[T+1,A1], Avoid[T,A1]),
+            foreach (A in 1..len(C[T]))
+                C[T,A,EID1] = 0,
+                C[T,A,EID2] = 0
             end
         end
     end.
@@ -136,78 +141,49 @@ preprocess_avoid(Avoid, B, C) =>
 
 % foreach vertex U, if U is at least distance D away from V,
 % then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
-preprocess_forward(A,V,MaxT,N,B) =>
+preprocess_forward(A,V,FV,Mks,N,B) =>
     foreach (U in 1..N, V !== U)
-        if shortest_path_cost((V,U),Dist) then
-            foreach (T1 in 1..min(Dist,MaxT))
-                B[T1,A,U] = 0
-            end
-        else
-        	foreach (T1 in 1..MaxT)
-        		B[T1,A,U] = 0
-        	end
+    	foreach (T in 1..(Mks div 2))
+    		if not exist_shorter_path((V,U),T-1) || not exist_shorter_path((U,FV),Mks-T) then
+    			B[T,A,U] = 0
+    		end
         end
     end.
 
 % foreach vertex U, if U is at least distance D away from FV,
 % then agent A cannot occupy vertex U at time MaxT, MaxT-1, ..., MaxT-D+1
-preprocess_backward(A,FV,MaxT,N,B) =>
+preprocess_backward(A,V,FV,Mks,N,B) =>
     foreach (U in 1..N, FV !== U)
-        if shortest_path_cost((U,FV),Dist) then
-            foreach (T1 in MaxT..-1..max(1,MaxT-Dist+1))
-                B[T1,A,U] = 0
+    	foreach (T in Mks..-1..(Mks div 2))
+    		if not exist_shorter_path((U,FV),Mks-T) || not exist_shorter_path((V,U),T-1) then
+	            B[T,A,U] = 0
             end
         end
     end.
 
-% foreach vertex U, if U is at least distance D away from V,
-% then agent A cannot occupy vertex U at time T, T+1, ..., T+D-1
-preprocess_sum(A,V,FV,MaxT,N,B) =>
-    foreach (U in 1..N, V !== U, FV !== U)
-        if shortest_path_cost((V,U),Dist1) then
-            if shortest_path_cost((U,FV),Dist2) then
-                Dist = Dist1+Dist2,
-                if Dist >= MaxT then
-                    foreach (T1 in 1..MaxT)
-                        B[T1,A,U] = 0
-                    end
-                end
-            else
-                foreach (T1 in 1..MaxT)
-                    B[T1,A,U] = 0
-                end
-            end
-        else
-            foreach (T1 in 1..MaxT)
-                B[T1,A,U] = 0
-            end
-        end
-    end.
 
-% if agent can not be in a vertex, then he could not use any edge connexted to it
+% if agent can not be in a vertex, then he could not use any edge connected to it
 preprocess_edges(K,N,M1,B,E,C) =>
+    % outgoing edges
 	foreach(A in 1..K, T in 1..M1-1, V in 1..N)
 		if B[T,A,V] == 0 then
-			% outgoing edges are 0
-			foreach(EID in 1..E)
-				edge(EID,U1,_),
-				if U1 == V then
-					C[T,A,EID] = 0
-				end
+            out_edges(V,EList),
+			foreach(EID in EList)
+                C[T,A,EID] = 0
 			end
 		end
 	end,
 
+    % incoming edges - works only for undirected graphs!!!
 	foreach(A in 1..K, T in 2..M1, V in 1..N)
 		if B[T,A,V] == 0 then
-			% incpoming edges are 0
-			foreach(EID in 1..E)
-				edge(EID,_,V1),
-				if V1 == V then
-					C[T-1,A,EID] = 0
-				end
-			end
-		end
+            out_edges(V,EList),
+            foreach(EID in EList)
+                edgeid(EID, V, U),
+                edge(OppositeEID, U, V),
+                C[T-1,A,OppositeEID] = 0
+            end
+        end
 	end.
 
 lower_bound(As,LB) =>
@@ -218,55 +194,67 @@ lower_bound([(V,FV)|As],LB0,LB) =>
     shortest_path_cost((V,FV),Cost),
 	lower_bound(As,max(LB0,Cost),LB).
 
-table (+,min)
-shortest_path_cost((0,_),Cost) => Cost = 0.
-shortest_path_cost((V,V),Cost) => Cost = 0.
+% TODO - compute shortest path using exist_shorter_path
+%table (+,min)
+%shortest_path_cost((0,_),Cost) => Cost = 0.
+%shortest_path_cost((V,V),Cost) => Cost = 0.
+%shortest_path_cost((V,FV),Cost) => 
+%    neibs(V,Neibs),
+%    member(NextV,Neibs),
+%    shortest_path_cost((NextV,FV),Cost1),
+%    Cost = Cost1+1.
+
+% TODO - there should be upper bound
 shortest_path_cost((V,FV),Cost) => 
+    TmpCost = 0,
+    while(not exist_shorter_path((V,FV),TmpCost))
+        TmpCost := TmpCost + 1
+    end,
+    Cost = TmpCost.
+
+
+% is there a path from V to FV that is not longer than Cost?
+table (+,+)
+exist_shorter_path((V,FV),Cost), Cost > 1 ?=>
+	Cost1 = Cost-1,
+	exist_shorter_path((V,FV),Cost1).
+	
+exist_shorter_path((V,V),Cost), Cost >= 0 => true.
+exist_shorter_path((V,FV),Cost), Cost > 0 => 
     neibs(V,Neibs),
     member(NextV,Neibs),
-    shortest_path_cost((NextV,FV),Cost1),
-    Cost = Cost1+1.
+    Cost1 = Cost-1,
+    exist_shorter_path((NextV,FV),Cost1).
+
 
 % create $edge from $neibs
 create_edges(N, E) =>
-	Ed = [],
+	Ed1 = [],
+    Ed2 = [],
 	EID = 1,
 	foreach(V in 1..N)
 		neibs(V,Neibs),
 		L = len(Neibs),
 		foreach(I in 1..L)
-			Ed := [$edge(EID, V, Neibs[I])|Ed],
+			Ed1 := [$edge(EID, V, Neibs[I])|Ed1],
+            Ed2 := [$edgeid(EID, V, Neibs[I])|Ed2],
 			EID := EID + 1
 		end
 	end,
 
-    cl_facts(Ed,[$edge(+,-,-)]),
-    E = len(Ed).
+    cl_facts(Ed1,[$edge(-,+,+)]),
+    cl_facts(Ed2,[$edgeid(+,-,-)]),
+    E = len(Ed1).
 
-% for edge EID finds an opposite edge and returns both edges as a list
-oposit_edges(EID, E, EList) =>
-	edge(EID,U,V),
-
-	ETMP = [EID],
-
-	foreach(EID1 in 1..E, EID !== EID1)
-		edge(EID1,V1,U1),
-		if V == V1 then
-			if U == U1 then
-            	ETMP := [EID1] ++ ETMP
-            end
-        end
-    end,
-    EList = ETMP.
 
 % for node W, get list of outgoing edges
-out_edges(W,E,EList) =>
+out_edges(W,EList) =>
 	ETMP = [],
-	foreach (EID in 1..E)
-		edge(EID,U,_),
-		if U == W then
-			ETMP := [EID] ++ ETMP
-		end
+    neibs(W,Neibs),
+    L = len(Neibs),
+    foreach(I in 1..L)
+        edge(EID,W,Neibs[I]),
+        ETMP := [EID] ++ ETMP
 	end,
 	EList = ETMP.
 
@@ -293,7 +281,7 @@ output_plan(B) =>
 % TEST INPUTS %
 %%%%%%%%%%%%%%%
 
-testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
+testins1(Graph, As, Avoid, Makespan, SumOfCosts) =>
     Graph = [
     $neibs(1,[1,3]),
     $neibs(2,[2,3]),
@@ -314,7 +302,7 @@ testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
     SumOfCosts = -1.
 
 
-testins2(Graph, As, Avoid, Makespan, SumOfCosts) =>
+testins(Graph, As, Avoid, Makespan, SumOfCosts) =>
     Graph = [
     $neibs(1,[1,20,2]),
     $neibs(2,[2,21,1,3]),

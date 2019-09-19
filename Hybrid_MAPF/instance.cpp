@@ -112,9 +112,9 @@ void Instance::IncreaseAgentsNumber()
 	agents++;
 }
 
-void Instance::ResetAgentsNumber()
+void Instance::ResetAgentsNumber(int a)
 {
-	agents = 0;
+	agents = a;
 }
 
 /* DEBUG */

@@ -1,0 +1,13 @@
+Reading file icts_instance.in
+Computing the single agent shortest path for all agents...
+Solving Problem instance:0 Grid Name:Random Grid #Agents:11, GridCells:171, #Obstacles:85
+----------------- Solver: ICTS 3E -----------------
+----------------- Instance: Problem instance:0 Grid Name:Random Grid #Agents:11, GridCells:171, #Obstacles:85-----------------
+Out of time
+Failed to solve
+Solution depth lower bound: 8
+
+Time In milliseconds: 194058,3742
+Found abnormal solution with negative cost
+Failed to solve this instance
+*********************THE END**************************
