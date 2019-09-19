@@ -16,10 +16,9 @@ class Instance
 public:
 	void ReadInput(std::string);
 	void IncreaseAgentsNumber();
-	void ResetAgentsNumber();
+	void ResetAgentsNumber(int = 1);
 
 	void ParseMap(std::string);
-	int Contains(std::vector<int>&, int);
 
 	std::string input_filename;
 	std::string statistic_file;

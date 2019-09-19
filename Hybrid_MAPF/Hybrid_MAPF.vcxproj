@@ -123,6 +123,7 @@
   <ItemGroup>
     <ClCompile Include="CBS.cpp" />
     <ClCompile Include="Dijkstra.cpp" />
+    <ClCompile Include="ICTS.cpp" />
     <ClCompile Include="ID.cpp" />
     <ClCompile Include="instance.cpp" />
     <ClCompile Include="main.cpp" />
@@ -132,6 +133,7 @@
     <ClInclude Include="CBS.h" />
     <ClInclude Include="Dijkstra.h" />
     <ClInclude Include="dirent.h" />
+    <ClInclude Include="ICTS.h" />
     <ClInclude Include="ID.h" />
     <ClInclude Include="instance.h" />
     <ClInclude Include="Picat.h" />

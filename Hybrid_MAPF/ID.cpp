@@ -2,28 +2,27 @@
 
 using namespace std;
 
-ID::ID(Instance* in, int cf)
+ID::ID(Instance* in, int cf, int fID)
 {
 	inst = in;
 	single_path = new Dijkstra(inst);
 	cost_function = cf;
+	full_ID = fID;
 }
 
-int ID::SolveProblem(int solver)
+int ID::SolveProblem(const vector<bool>& solvers_to_use)
 {
 	runtime = 0;
 
 	current_plan = vector<vector<int> >(inst->agents, vector<int>());
 
-	if (solver == 1)
+	// select all possible solvers
+	if (solvers_to_use[0])
 		solvers.push_back(new PicatSolver(inst, cost_function));
-	else if (solver == 2)
+	if (solvers_to_use[1])
 		solvers.push_back(new CBSSolver(inst, cost_function));
-	else
-	{
-		solvers.push_back(new CBSSolver(inst, cost_function));
-		solvers.push_back(new PicatSolver(inst, cost_function));
-	}
+	if (solvers_to_use[2])
+		solvers.push_back(new ICTSSolver(inst, cost_function));
 
 	solver_computed = vector<int>(solvers.size());
 	solver_used = vector<int>(solvers.size());
@@ -54,11 +53,34 @@ int ID::SolveProblem(int solver)
 	int g1, g2;
 	while (CheckForConflicts(g1, g2))
 	{
-		if (CheckPastConflicts(g1, g2))
+		if (full_ID == 1) // if we use simple ID, just merge the groups
 		{
-			// if g1 and g2 conflicted before, merge them and replan without constraints
-			MergeGroups(g1, g2);
-			ret_val = PlanForGroups(g1, -1, -1);
+			if (CheckPastConflicts(g1, g2))
+			{
+				// if g1 and g2 conflicted before, merge them and replan without constraints
+				MergeGroups(g1, g2);
+				ret_val = PlanForGroups(g1, -1, -1);
+				if (ret_val == -100)	// timeout
+				{
+					return CleanUp(-1);
+				}
+				else if (ret_val == 0)	// ok
+					continue;
+			}
+
+			conflicted_groups.push_back(make_pair(g1, g2));
+
+			// plan for g1 while avoiding g2
+			ret_val = PlanForGroups(g1, g2, ComputeGroupCost(g1));
+			if (ret_val == -100)	// timeout
+			{
+				return CleanUp(-1);
+			}
+			else if (ret_val == 0)	// ok
+				continue;
+
+			// plan for g2 while avoiding g1
+			ret_val = PlanForGroups(g2, g1, ComputeGroupCost(g2));
 			if (ret_val == -100)	// timeout
 			{
 				return CleanUp(-1);
@@ -66,26 +88,6 @@ int ID::SolveProblem(int solver)
 			else if (ret_val == 0)	// ok
 				continue;
 		}
-
-		conflicted_groups.push_back(make_pair(g1, g2));
-
-		// plan for g1 while avoiding g2
-		ret_val = PlanForGroups(g1, g2, ComputeGroupCost(g1));
-		if (ret_val == -100)	// timeout
-		{
-			return CleanUp(-1);
-		}
-		else if (ret_val == 0)	// ok
-			continue;
-
-		// plan for g2 while avoiding g1
-		ret_val = PlanForGroups(g2, g1, ComputeGroupCost(g2));
-		if (ret_val == -100)	// timeout
-		{
-			return CleanUp(-1);
-		}
-		else if (ret_val == 0)	// ok
-			continue;
 
 		// if nothing is possible, merge g1 and g2 and replan without constraints
 		MergeGroups(g1, g2);
