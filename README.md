@@ -23,3 +23,32 @@ To run the picat solver, only files [picat, exs, lib, mks.pi, soc.pi] are needed
 Usage example> ./picat mks.pi picat_instance.pi
 
 The output is the number of agents (a) and the number of timesteps used (n) and a matrix a times n. Each line corresponds to a path of a single agent.
+
+Example input is in file bin/picat_instance.pi. The graph is stored as a list of neighbors for each vertex. The vertex itself is its own neighbor. Note that the vertices are indexed starting from 1. The agents are stored as a list named As. Each agent is a tuple (start_vertex, end_vertex). The last 3 lines are not needed for simple ID but must be present to prevent syntax errors.
+
+# CBS Solver
+bin/cbs.exe - the CBS algorithm
+bin/cbs_instance.in - instance for CBS solver
+bin/cbs_solution.out - output of the solver
+
+To run the CBS solver, only file [cbs.exe] is needed. The CBS solver must be run on a Windows machine.
+
+Usage> cbs.exe cbs_instance.in [timeout in ms] [soc|makespan]
+
+The third parameter chooses the cost function. This parameter is optional, if no cost function is selected, soc is used by default.
+
+Example input is in file bin/cbs_instance.in. It is the standard CBS file format. The output is the same as in SAT-based solver.
+
+# ICTS Solver
+bin/icts.exe - the ICTS algorithm
+bin/icts_instance.in - instance for ICTS solver
+bin/icts_solution.out - output of the solver
+
+To run the ICTS solver, only file [icts.exe] is needed. The ICTS solver must be run on a Windows machine.
+
+Usage> icts.exe cbs_instance.in [timeout in ms]
+
+The ICTS solver works only with sum of costs objective function. ICTS also works only for simple ID algorithm.
+
+Example input is in file bin/icts_instance.in. It is the standard CBS file format. The output is the same as in SAT-based solver.
+
